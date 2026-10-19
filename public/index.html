@@ -46,7 +46,8 @@ textarea{min-height:90px;resize:vertical}.row{display:flex;gap:8px;align-items:c
   <button id="vm" onclick="setV('month')">Mese</button><button id="vw" onclick="setV('week')">Settimana</button>
   <button onclick="nav(-1)">‹</button><h2 id="ti"></h2><button onclick="nav(1)">›</button>
   <button onclick="cur=new Date();render()">Oggi</button><span class="sp"></span>
-  <button onclick="fetch('/api/test',{method:'POST'})">Prova notifica</button>
+  <button onclick="testN()">Prova notifica</button>
+  <button id="bpush" style="display:none" onclick="enablePush()">🔔 Attiva notifiche</button>
   <button class="pri" onclick="openM(null,ds(new Date()))">+ Nuova task</button>
   <button class="lk" onclick="openL()">LINK PROGETTI</button>
   <button class="lk" onclick="openN()">NOTIZIE TG</button>
@@ -55,6 +56,7 @@ textarea{min-height:90px;resize:vertical}.row{display:flex;gap:8px;align-items:c
 <form onsubmit="say(event)"><input id="ci" autocomplete="off" placeholder="Es. Domani alle 15 chiama Marco, avvisami 30 minuti prima"><button class="pri">Aggiungi</button></form></div>
 <div class="dash"><div id="g" class="g"></div><aside id="dl"><div class="dh"><b>Scadenze</b><label class="chk"><input id="hd" type="checkbox" onchange="render()"> Nascondi fatte</label></div><div id="dlist"></div></aside></div>
 
+<div class="u" style="margin:14px 0 4px;font-size:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">Dati: <button onclick="exportDati()">Esporta backup</button><button onclick="$('#imp').click()">Importa da file</button><input id="imp" type="file" accept=".json,application/json" style="display:none" onchange="importDati(this)"></div>
 <div class="m" id="m" onclick="if(event.target==this)closeM()"><div class="box">
   <div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2 id="mt" style="min-width:0;text-align:left">Task</h2><label class="fx" id="fxl"><input id="fx" type="checkbox" onchange="this.parentNode.classList.toggle('ok',this.checked)"> ✓ Fatta</label></div>
   <label>Titolo<input id="ft"></label>
@@ -78,6 +80,12 @@ textarea{min-height:90px;resize:vertical}.row{display:flex;gap:8px;align-items:c
   <div id="nl"></div>
   <div class="u" style="font-size:12px">Il tasto «Copia» mette il messaggio negli appunti. Non viene inviato nulla: lo incolli (Cmd + V) dove vuoi tu.</div>
 </div></div>
+<div class="m" id="mlg"><form class="box" style="width:min(360px,92vw)" onsubmit="doLogin(event)">
+  <h2 style="min-width:0;text-align:left">Agenda</h2>
+  <label>Password<input id="lgp" type="password" autocomplete="current-password"></label>
+  <div id="lge" style="color:var(--red);font-size:13px;min-height:16px"></div>
+  <button class="pri" type="submit">Entra</button>
+</form></div>
 <div id="toast"></div>
 
 <script>
@@ -88,8 +96,41 @@ let T=[],LK=[],view='month',cur=new Date(),editId=null,editK=null;
 const ds=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const pd=s=>{const[a,b,c]=s.split('-');return new Date(+a,b-1,+c)};
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const save=()=>fetch('/api/tasks',{method:'POST',body:JSON.stringify(T.concat(LK))});
-const load=()=>{if(!document.querySelector('.m.show'))fetch('/api/tasks').then(r=>r.json()).then(x=>{T=x.filter(t=>t.kind!='link');LK=x.filter(t=>t.kind=='link');render()})};
+const F=(u,o)=>fetch(u,o).then(r=>{if(r.status===401){showLogin();return Promise.reject(new Error('login'))}return r});
+let LOADED=false,CFG=null;
+function showLogin(){$('#mlg').classList.add('show');setTimeout(()=>$('#lgp').focus(),50)}
+function doLogin(e){e&&e.preventDefault();
+  fetch('/api/login',{method:'POST',body:JSON.stringify({password:$('#lgp').value})}).then(r=>r.json().then(x=>({ok:r.ok,x}))).then(({ok,x})=>{
+    if(ok){$('#lgp').value='';$('#lge').textContent='';$('#mlg').classList.remove('show');boot()}else $('#lge').textContent=x.error||'Password non corretta'
+  }).catch(()=>{$('#lge').textContent='Errore di rete: riprova'})}
+const save=()=>{
+  if(!LOADED){toast('Dati non ancora caricati: aspetta un attimo e riprova.',5000);return Promise.resolve()}
+  return F('/api/tasks',{method:'POST',body:JSON.stringify(T.concat(LK))}).then(r=>{if(!r.ok)toast('Salvataggio non riuscito: riprova.',6000)})
+    .catch(e=>{if(!e||e.message!=='login')toast('Salvataggio non riuscito: controlla la connessione.',6000)})};
+const load=()=>{if(document.querySelector('.m.show'))return;
+  F('/api/tasks').then(r=>r.json()).then(x=>{if(!Array.isArray(x))throw 0;T=x.filter(t=>t.kind!='link');LK=x.filter(t=>t.kind=='link');LOADED=true;render()}).catch(()=>{})};
+function testN(){F('/api/test',{method:'POST'}).then(r=>r.json()).then(x=>{if(x&&x.error)toast(x.error,7000)}).catch(()=>{})}
+const b64u=k=>{const p='='.repeat((4-k.length%4)%4),b=atob((k+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))};
+async function pushSub(ask){
+  if(!CFG||!CFG.vapidPublicKey||!('serviceWorker' in navigator)||!('PushManager' in window))return null;
+  if(ask){const p=await Notification.requestPermission();if(p!=='granted')throw new Error('Permesso negato: abilita le notifiche per questo sito nelle impostazioni del browser.')}
+  else if(Notification.permission!=='granted')return null;
+  const reg=await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;
+  const sub=(await reg.pushManager.getSubscription())||(ask?await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(CFG.vapidPublicKey)}):null);
+  if(sub){await F('/api/push',{method:'POST',body:JSON.stringify(sub)});$('#bpush').textContent='🔔 Notifiche attive'}
+  return sub}
+function enablePush(){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window))return alert('Questo browser non supporta le notifiche push.');
+  pushSub(true).then(s=>{if(s)toast('Notifiche attivate su questo browser. Premi «Prova notifica» per controllare.',6000)}).catch(e=>{if(!e||e.message!=='login')alert('Non sono riuscita ad attivare le notifiche: '+(e&&e.message||e))})}
+function boot(){load();
+  F('/api/config').then(r=>r.json()).then(c=>{if(c&&c.mode==='cloud'){CFG=c;$('#bpush').style.display='';pushSub(false).catch(()=>{})}}).catch(()=>{})}
+function exportDati(){const b=new Blob([JSON.stringify(T.concat(LK),null,1)],{type:'application/json'}),a=document.createElement('a');
+  a.href=URL.createObjectURL(b);a.download='agenda-'+ds(new Date())+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function importDati(inp){const f=inp.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>{try{const arr=JSON.parse(rd.result);if(!Array.isArray(arr)||!arr.every(x=>x&&typeof x==='object'&&x.id))throw 0;
+    const have=new Set(T.concat(LK).map(x=>x.id));let n=0;arr.forEach(x=>{if(!have.has(x.id)){(x.kind=='link'?LK:T).push(x);n++}});
+    save();render();toast('Importate '+n+' voci (quelle già presenti non sono state toccate).',6000)}catch(e){alert('File non valido: scegli il file «tasks.json» o un backup esportato dall\'Agenda.')}inp.value=''};
+  rd.readAsText(f)}
 let tmo;function toast(t,ms){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(tmo);tmo=setTimeout(()=>e.style.display='none',ms||3500)}
 function setV(v){view=v;render()}
 function nav(n){if(view=='month'){cur.setDate(1);cur.setMonth(cur.getMonth()+n)}else cur.setDate(cur.getDate()+7*n);render()}
@@ -153,12 +194,12 @@ function openN(){$('#mn').classList.add('show');loadN()}
 function closeN(){$('#mn').classList.remove('show')}
 function loadN(){
   $('#nl').innerHTML='<div class="u">Leggo le notizie dal sito di Teleboario…</div>';$('#ns').textContent='';
-  fetch('/api/news?fresh=1').then(r=>r.json()).then(x=>{
+  F('/api/news?fresh=1').then(r=>r.json()).then(x=>{
     if(x.error||!x.items||!x.items.length)return $('#nl').innerHTML='<div class="u">Il programma ha provato a leggere teleboario.it ma non ci è riuscito. Motivo: <b>'+esc(x.error||'nessuna notizia trovata')+'</b>. Controlla internet e premi «Aggiorna».</div>';
     NW=x.items;
     $('#nl').innerHTML=NW.map((n,i)=>`<div class="nr"><div class="nt"><span class="tt">${esc(n.title)}</span> 👉🏼 <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.url)}</a></div><button class="pri" onclick="copia(${i})">Copia</button></div>`).join('');
     $('#ns').textContent='Le 5 ultime news in evidenza sul sito · aggiornato alle '+new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})
-  }).catch(()=>{$('#nl').innerHTML='<div class="u">Il programma di sfondo dell\'Agenda non risponde a questa funzione. Fai doppio click su «Riavvia Agenda.command» nella cartella Agenda, poi premi «Aggiorna».</div>'})}
+  }).catch(e=>{if(e&&e.message==='login')return;$('#nl').innerHTML='<div class="u">Il programma di sfondo dell\'Agenda non risponde a questa funzione. Fai doppio click su «Riavvia Agenda.command» nella cartella Agenda, poi premi «Aggiorna».</div>'})}
 function copyTxt(s){
   try{const t=document.createElement('textarea');t.value=s;t.style.cssText='position:fixed;opacity:0';document.body.appendChild(t);t.select();document.execCommand('copy');t.remove()}catch(e){}
   try{navigator.clipboard&&navigator.clipboard.writeText(s)}catch(e){}}
@@ -238,5 +279,5 @@ function say(e){e.preventDefault();const v=$('#ci').value.trim();if(!v)return;
   v.split(/[;\n]+/).map(s=>s.trim()).filter(Boolean).forEach(s=>{const r=parseOne(s);T.push(r.t);first=first||r.t;h+='<div>'+esc(r.msg)+'</div>'});
   $('#log').innerHTML+=h;$('#log').scrollTop=1e5;$('#ci').value='';
   save();cur=pd(first.date);render()}
-load();setInterval(load,30000);
+boot();setInterval(load,30000);
 </script></body></html>

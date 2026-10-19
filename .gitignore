@@ -1,0 +1,12 @@
+# Dati personali: non vanno mai su GitHub
+tasks.json
+tasks.json.tmp
+backup/
+# Segreti e file generati
+.env*
+.vercel/
+node_modules/
+# File di sistema
+.DS_Store
+__pycache__/
+*.pyc

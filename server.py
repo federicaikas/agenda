@@ -9,6 +9,9 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(BASE, "tasks.json")
 BK = os.path.join(BASE, "backup")
 lock = threading.Lock()
+INDEX = os.path.join(BASE, "index.html")
+if not os.path.exists(INDEX):  # eseguito dal progetto GitHub: la pagina sta in public/
+    INDEX = os.path.join(BASE, "public", "index.html")
 
 
 def load():
@@ -187,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as err:
                 self.reply(json.dumps({"error": str(err)[:120]}))
         else:
-            with open(os.path.join(BASE, "index.html"), "rb") as f:
+            with open(INDEX, "rb") as f:
                 self.reply(f.read(), "text/html")
 
     def do_POST(self):

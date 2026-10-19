@@ -1,0 +1,8 @@
+{
+  "name": "agenda",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Agenda personale: versione online (Vercel) e versione locale per Mac",
+  "engines": { "node": ">=18" },
+  "dependencies": { "web-push": "^3.6.7" }
+}

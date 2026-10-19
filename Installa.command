@@ -3,7 +3,7 @@ cd "$(dirname "$0")"
 D="$HOME/Agenda"
 P="$HOME/Library/LaunchAgents/com.agenda.app.plist"
 mkdir -p "$D" "$HOME/Library/LaunchAgents"
-cp server.py index.html "$D/"
+cp server.py public/index.html "$D/"
 cp "Riavvia Agenda.command" Disinstalla.command "$D/" 2>/dev/null
 chmod +x "$D"/*.command 2>/dev/null
 cat > "$P" <<PLIST
